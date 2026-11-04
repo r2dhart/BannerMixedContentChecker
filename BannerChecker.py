@@ -80,9 +80,9 @@ class BannerChecker:
             logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def _analyze_headers(self, received_headers: dict, report: ScanReport):
+    def _analyze_headers(self, headers: dict, report: ScanReport):
         # Normalize headers to lowercase for consistent comparison
-        lower_headers = {k.lower(): v for k, v in received_headers.items()}
+        lower_headers = {k.lower(): v for k, v in headers.items()}
 
         # Check Banners
         for h in BANNER_HEADERS:
