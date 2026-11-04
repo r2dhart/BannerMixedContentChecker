@@ -71,6 +71,7 @@ class BannerChecker:
                 html=response.text
             )
 
+            # Explicitly passing response.headers to avoid NameError
             self._analyze_headers(response.headers, report)
             self._analyze_mixed_content(url, report.html, report)
 
@@ -79,9 +80,9 @@ class BannerChecker:
             logger.error(f"Error fetching {url}: {e}")
             return None
 
-    def _analyze_headers(self, headers: dict, report: ScanReport):
+    def _analyze_headers(self, received_headers: dict, report: ScanReport):
         # Normalize headers to lowercase for consistent comparison
-        lower_headers = {k.lower(): v for k, v in headers.items()}
+        lower_headers = {k.lower(): v for k, v in received_headers.items()}
 
         # Check Banners
         for h in BANNER_HEADERS:
