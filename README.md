@@ -28,37 +28,37 @@
    git clone https://github.com/yourusername/BannerMixedContentChecker.git
    cd BannerMixedContentChecker
 2. Install the required dependencies:
-   '''bash
+   ```bash
    pip install -r requirements.txt
 
 ## Usage
 Run the checker from your terminal by providing the target URL or hostname:
-'''bash
-python3 BannerChecker.py https://example.com
+   ```bash
+  python3 BannerChecker.py https://example.com
 
 ## Example Output
-'''bash
-=== Scan Results for https://example.com ===
-[+] HTTP status: 200
-
---- Banner Disclosure ---
-[!] Server: Apache/2.4.41 (Information disclosure)
-
---- Security Headers ---
-[!] Content-Security-Policy: MISSING
-[!] X-Frame-Options: MISSING
-
---- Mixed Content Check ---
-[!] Mixed content: <img> -> http://example.com/image.jpg
-
-=== Summary ===
-[!] 2 security headers missing.
-[+] Scan complete.
+    ```bash
+    === Scan Results for https://example.com ===
+      [+] HTTP status: 200
+    
+      --- Banner Disclosure ---
+      [!] Server: Apache/2.4.41 (Information disclosure)
+    
+      --- Security Headers ---
+      [!] Content-Security-Policy: MISSING
+      [!] X-Frame-Options: MISSING
+    
+      --- Mixed Content Check ---
+      [!] Mixed content: <img> -> http://example.com/image.jpg
+    
+      === Summary ===
+      [!] 2 security headers missing.
+      [+] Scan complete.
 
 ## Testing
 To run the unit tests locally, ensure you are in the project root and run:
-'''bash
-python3 -m pytest
+    ```bash
+    python3 -m pytest
 
 ## Contributing
 As this is a work in progress, contributions are welcome! Please feel free to submit Pull Requests or open an Issue if you find a bug or have a suggestion for a new feature.
