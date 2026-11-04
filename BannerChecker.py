@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import requests
+import logging
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional
 from urllib.parse import urlparse, urljoin
 from bs4 import BeautifulSoup
 
+# --- Configuration Constants ---
 RECOMMENDED_SECURITY_HEADERS = {
     "Strict-Transport-Security": "Helps enforce HTTPS and prevent downgrade attacks",
     "Content-Security-Policy": "Helps prevent XSS and content injection",
@@ -31,97 +35,117 @@ RESOURCE_TAGS = {
     "form": "action",
 }
 
+# Setup Logging
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
-def normalize_url(url: str) -> str:
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        url = "https://" + url
-    return url
+@dataclass
+class ScanReport:
+    url: str
+    status_code: int
+    html: str
+    missing_security_headers: List[str] = field(default_factory=list)
+    mixed_content: List[Tuple[str, str]] = field(default_factory=list)
+    banner_disclosures: List[Tuple[str, str]] = field(default_factory=list)
 
+class BannerChecker:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "BannerChecker/1.0"})
 
-def check_headers(url: str):
-    print("\n=== Header & Banner Check ===")
-    try:
-        resp = requests.get(url, timeout=10)
-    except requests.RequestException as e:
-        print(f"[!] Error fetching URL: {e}")
-        return None, None
+    def normalize_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            url = "https://" + url
+        return url
 
-    print(f"[+] HTTP status: {resp.status_code}")
-    headers = {k.lower(): v for k, v in resp.headers.items()}
+    def run_scan(self, target_url: str) -> Optional[ScanReport]:
+        url = self.normalize_url(target_url)
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+
+            report = ScanReport(
+                url=url,
+                status_code=response.status_code,
+                html=response.text
+            )
+
+            self._analyze_headers(response.headers, report)
+            self._analyze_mixed_content(url, report.html, report)
+
+            return report
+        except requests.RequestException as e:
+            logger.error(f"Error fetching {url}: {e}")
+            return None
+
+    def _analyze_headers(self, headers: dict, report: ScanReport):
+        # Normalize headers to lowercase for consistent comparison
+        lower_headers = {k.lower(): v for k, v in headers.items()}
+
+        # Check Banners
+        for h in BANNER_HEADERS:
+            key = h.lower()
+            if key in lower_headers:
+                report.banner_disclosures.append((h, lower_headers[key]))
+
+        # Check Security Headers
+        for h, desc in RECOMMENDED_SECURITY_HEADERS.items():
+            key = h.lower()
+            if key not in lower_headers:
+                report.missing_security_headers.append(h)
+
+    def _analyze_mixed_content(self, base_url: str, html: str, report: ScanReport):
+        soup = BeautifulSoup(html, "html.parser")
+        for tag, attr in RESOURCE_TAGS.items():
+            for element in soup.find_all(tag):
+                src = element.get(attr)
+                if src:
+                    absolute = urljoin(base_url, src)
+                    if absolute.startswith("http://"):
+                        report.mixed_content.append((tag, absolute))
+
+def print_report(report: ScanReport):
+    print(f"\n=== Scan Results for {report.url} ===")
+    print(f"[+] HTTP status: {report.status_code}")
 
     print("\n--- Banner Disclosure ---")
-    for h in BANNER_HEADERS:
-        key = h.lower()
-        if key in headers:
-            print(f"[!] {h}: {headers[key]}  (Information disclosure)")
-        else:
-            print(f"[+] {h}: not present")
+    if report.banner_disclosures:
+        for h, val in report.banner_disclosures:
+            print(f"[!] {h}: {val} (Information disclosure)")
+    else:
+        print("[+] No banner headers detected.")
 
     print("\n--- Security Headers ---")
-    missing = []
-    for h, desc in RECOMMENDED_SECURITY_HEADERS.items():
-        key = h.lower()
-        if key in headers:
-            print(f"[+] {h}: PRESENT -> {headers[key]}")
-        else:
-            print(f"[!] {h}: MISSING ({desc})")
-            missing.append(h)
-
-    return resp.text, missing
-
-
-def check_mixed_content(url: str, html: str):
-    print("\n=== Mixed Content Check ===")
-    soup = BeautifulSoup(html, "html.parser")
-    mixed = []
-
-    for tag, attr in RESOURCE_TAGS.items():
-        for element in soup.find_all(tag):
-            src = element.get(attr)
-            if not src:
-                continue
-
-            absolute = urljoin(url, src)
-            if absolute.startswith("http://"):
-                mixed.append((tag, absolute))
-
-    if mixed:
-        print("[!] Mixed content detected:")
-        for tag, link in mixed:
-            print(f"    - <{tag}> → {link}")
-    else:
-        print("[+] No mixed content found.")
-
-    return mixed
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Check a website for banner exposure, security header issues, and mixed content."
-    )
-    #parser.add_argument("url", help="Target URL or hostname")
-    #args = parser.parse_args()
-    args = input("Enter the URL or hostname to check: ")
-
-    url = normalize_url(args)
-    print(f"[+] Checking: {url}")
-
-    html, missing_headers = check_headers(url)
-
-    if html:
-        check_mixed_content(url, html)
-
-    print("\n=== Summary ===")
-    if missing_headers:
-        print("[!] Missing security headers:")
-        for h in missing_headers:
-            print(f"    - {h}")
+    if report.missing_security_headers:
+        for h in report.missing_security_headers:
+            print(f"[!] {h}: MISSING")
     else:
         print("[+] All recommended security headers present.")
 
-    print("[+] Scan complete.\n")
+    print("\n--- Mixed Content Check ---")
+    if report.mixed_content:
+        for tag, link in report.mixed_content:
+            print(f"[!] Mixed content: <{tag}> -> {link}")
+    else:
+        print("[+] No mixed content found.")
 
+def main():
+    parser = argparse.ArgumentParser(description="Check a website for banner exposure, security header issues, and mixed content.")
+    parser.add_argument("url", help="Target URL or hostname")
+    args = parser.parse_args()
+
+    checker = BannerChecker()
+    report = checker.run_scan(args.url)
+
+    if report:
+        print_report(report)
+        print("\n=== Summary ===")
+        if report.missing_security_headers:
+            print(f"[!] {len(report.missing_security_headers)} security headers missing.")
+        else:
+            print("[+] All recommended security headers present.")
+        print("[+] Scan complete.\n")
 
 if __name__ == "__main__":
     main()
