@@ -1,61 +1,166 @@
 # tests/test_banner_checker.py
-import pytest
 from unittest.mock import MagicMock, patch
-from BannerChecker import BannerChecker, ScanReport, RECOMMENDED_SECURITY_HEADERS, BANNER_HEADERS
+
+import pytest
+import requests
+
+from BannerChecker import (
+    SECURITY_HEADERS,
+    BannerChecker,
+    Disclosure,
+    ScanError,
+    ScanReport,
+    find_banner_disclosures,
+    find_missing_security_headers,
+    find_mixed_content,
+    main,
+    normalize_url,
+)
+
 
 @pytest.fixture
 def checker():
     return BannerChecker()
 
-def test_normalize_url(checker):
-    assert checker.normalize_url("google.com") == "https://google.com"
-    assert checker.normalize_url("https://google.com") == "https://google.com"
 
-def test_analyze_headers(checker):
-    # Mock headers: has one banner (Server) but missing a security header (CSP)
-    mock_headers = {
-        "Server": "Apache",
-        "X-Powered-By": "PHP",
-        "Content-Type": "text/html"
-    }
-    report = ScanReport(url="test.com", status_code=200, html="<html></html>")
+# --- normalize_url -----------------------------------------------------------
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("google.com", "https://google.com"),
+        ("https://google.com", "https://google.com"),
+        ("http://google.com", "http://google.com"),
+        ("localhost:8080", "https://localhost:8080"),
+        ("  example.com  ", "https://example.com"),
+    ],
+)
+def test_normalize_url(raw, expected):
+    assert normalize_url(raw) == expected
 
-    checker._analyze_headers(mock_headers, report)
 
-    # Check banners
-    assert any(h == "Server" for h, val in report.banner_disclosures)
-    # Check missing security headers (CSP should be missing)
-    assert "Content-Security-Policy" in report.missing_security_headers
+# --- headers -----------------------------------------------------------------
+def test_find_banner_disclosures():
+    headers = {"Server": "Apache", "X-Powered-By": "PHP", "Content-Type": "text/html"}
+    result = find_banner_disclosures(headers)
+    assert Disclosure("Server", "Apache") in result
+    assert Disclosure("X-Powered-By", "PHP") in result
+    assert len(result) == 2
 
-def test_analyze_mixed_content(checker):
-    # Mock HTML with a mixed content link (http)
+
+def test_banner_header_match_is_case_insensitive():
+    assert find_banner_disclosures({"server": "nginx"}) == [Disclosure("Server", "nginx")]
+
+
+def test_find_missing_security_headers():
+    headers = {"X-Frame-Options": "DENY", "content-type": "text/html"}
+    missing = find_missing_security_headers(headers)
+    assert "Content-Security-Policy" in missing
+    assert "X-Frame-Options" not in missing
+
+
+def test_no_missing_headers_when_all_present():
+    headers = {h: "x" for h in SECURITY_HEADERS}
+    assert find_missing_security_headers(headers) == []
+
+
+# --- mixed content -----------------------------------------------------------
+def test_find_mixed_content():
     html = """
-    <html>
-        <body>
-            <img src="http://example.com/image.jpg">
-            <script src="https://safe.com/script.js"></script>
-        </body>
-    </html>
+    <html><body>
+        <img src="http://example.com/image.jpg">
+        <script src="https://safe.com/script.js"></script>
+    </body></html>
     """
-    report = ScanReport(url="https://test.com", status_code=200, html=html)
+    result = find_mixed_content("https://test.com", html)
+    assert len(result) == 1
+    assert result[0].tag == "img"
+    assert result[0].url == "http://example.com/image.jpg"
 
-    checker._analyze_mixed_content("https://test.com", html, report)
 
-    assert len(report.mixed_content) == 1
-    assert report.mixed_content[0][0] == "img"
-    assert "http://" in report.mixed_content[0][1]
+def test_mixed_content_ignores_non_https_pages():
+    assert find_mixed_content("http://test.com", '<img src="http://a.com/x.png">') == []
+
+
+def test_mixed_content_deduplicates_and_handles_srcset():
+    html = """
+    <img src="http://a.com/x.png"><img src="http://a.com/x.png">
+    <img srcset="http://b.com/1.jpg 1x, /2.jpg 2x">
+    """
+    urls = {m.url for m in find_mixed_content("https://test.com", html)}
+    assert urls == {"http://a.com/x.png", "http://b.com/1.jpg"}
+
+
+def test_mixed_content_skips_non_loading_links():
+    html = """
+    <link rel="canonical" href="http://d.com/">
+    <link rel="stylesheet" href="http://e.com/s.css">
+    <a href="http://g.com">plain link</a>
+    """
+    result = find_mixed_content("https://test.com", html)
+    assert [m.url for m in result] == ["http://e.com/s.css"]
+
+
+def test_mixed_content_resolves_protocol_relative_urls_against_base():
+    assert find_mixed_content("https://test.com", '<script src="//cdn.com/a.js"></script>') == []
+
+
+# --- scan --------------------------------------------------------------------
+def make_response(url="https://test.com/", status=200, headers=None, text="<html></html>"):
+    response = MagicMock()
+    response.url = url
+    response.status_code = status
+    response.headers = headers if headers is not None else {}
+    response.text = text
+    return response
+
 
 @patch("requests.Session.get")
-def test_run_scan_success(mock_get, checker):
-    # Setup mock response
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.headers = {"Server": "MockServer"}
-    mock_response.text = "<html></html>"
-    mock_get.return_value = mock_response
+def test_scan_success(mock_get, checker):
+    mock_get.return_value = make_response(
+        headers={"Server": "MockServer", "Content-Type": "text/html"},
+        text='<img src="http://a.com/x.png">',
+    )
 
-    report = checker.run_scan("http://test.com")
+    report = checker.scan("test.com")
 
-    assert report is not None
+    assert isinstance(report, ScanReport)
     assert report.status_code == 200
-    assert "Server" in [h for h, v in report.banner_disclosures]
+    assert report.final_url == "https://test.com/"
+    assert Disclosure("Server", "MockServer") in report.banner_disclosures
+    assert len(report.mixed_content) == 1
+    assert report.has_findings
+
+
+@patch("requests.Session.get")
+def test_scan_inspects_error_responses(mock_get, checker):
+    mock_get.return_value = make_response(status=500, headers={"Server": "Leaky/1.0"})
+    report = checker.scan("test.com")
+    assert report.status_code == 500
+    assert report.banner_disclosures
+
+
+@patch("requests.Session.get")
+def test_scan_skips_mixed_content_for_non_html(mock_get, checker):
+    mock_get.return_value = make_response(
+        headers={"Content-Type": "application/json"}, text='<img src="http://a.com/x.png">'
+    )
+    assert checker.scan("test.com").mixed_content == []
+
+
+@patch("requests.Session.get", side_effect=requests.ConnectionError("boom"))
+def test_scan_raises_scan_error_on_network_failure(mock_get, checker):
+    with pytest.raises(ScanError):
+        checker.scan("test.com")
+
+
+# --- CLI ---------------------------------------------------------------------
+@patch("requests.Session.get")
+def test_main_exit_codes(mock_get, capsys):
+    mock_get.return_value = make_response(headers={h: "x" for h in SECURITY_HEADERS})
+    assert main(["test.com"]) == 0
+
+    mock_get.return_value = make_response(headers={})
+    assert main(["test.com"]) == 1
+
+    mock_get.side_effect = requests.ConnectionError("boom")
+    assert main(["test.com"]) == 2
