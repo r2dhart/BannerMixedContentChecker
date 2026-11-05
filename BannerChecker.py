@@ -161,7 +161,7 @@ def find_mixed_content(base_url: str, html: str) -> list[MixedResource]:
 
 # --- Scanner -----------------------------------------------------------------
 class BannerChecker:
-    def __init__(self, timeout: float = 10.0, verify_tls: bool = True):
+    def __init__(self, timeout: float = 10.0, verify_tls: bool = True) -> None:
         self.timeout = timeout
         self.verify_tls = verify_tls
         self.session = requests.Session()
