@@ -115,6 +115,8 @@ def normalize_url(url: str) -> str:
         raise ValueError("URL must use http or https")
     if not parts.hostname:
         raise ValueError("URL must include a hostname")
+    if parts.netloc.endswith(":"):
+        raise ValueError("URL port cannot be empty")
 
     return candidate
 

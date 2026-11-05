@@ -31,6 +31,9 @@ def checker():
         ("https://google.com", "https://google.com"),
         ("http://google.com", "http://google.com"),
         ("localhost:8080", "https://localhost:8080"),
+        ("https://[::1]:8443", "https://[::1]:8443"),
+        ("https://example.com/path", "https://example.com/path"),
+        ("https://example.com/search?q=term", "https://example.com/search?q=term"),
         ("  example.com  ", "https://example.com"),
     ],
 )
@@ -44,6 +47,7 @@ def test_normalize_url(raw, expected):
         "ftp://example.com",
         "https:///missing-host",
         "http://[::1",
+        "https://example.com:",
         "https://example.com:bad",
         "https://example.com:65536",
         "https://bad host/",
