@@ -95,7 +95,28 @@ class ScanError(Exception):
 def normalize_url(url: str) -> str:
     """Add https:// when no scheme is given. (urlparse mis-reads 'host:8080'.)"""
     url = url.strip()
-    return url if "://" in url else f"https://{url}"
+    if not url:
+        raise ValueError("URL cannot be empty")
+
+    candidate = url if "://" in url else f"https://{url}"
+
+    # Raw whitespace/control characters should be percent-encoded in a URL.
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F
+        for char in candidate):
+        raise ValueError("URL cannot contain whitespace or control characters")
+
+    try:
+        parts = urlsplit(candidate)
+        port = parts.port  # Raises ValueError for invalid or out-of-range ports.
+    except ValueError as exc:
+        raise ValueError(f"Malformed URL: {exc}") from exc
+
+    if parts.scheme not in {"http", "https"}:
+        raise ValueError("URL must use http or https")
+    if not parts.hostname:
+        raise ValueError("URL must include a hostname")
+
+    return candidate
 
 
 def find_banner_disclosures(headers: Mapping[str, str]) -> list[Disclosure]:

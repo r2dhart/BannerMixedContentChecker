@@ -37,6 +37,22 @@ def checker():
 def test_normalize_url(raw, expected):
     assert normalize_url(raw) == expected
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "ftp://example.com",
+        "https:///missing-host",
+        "http://[::1",
+        "https://example.com:bad",
+        "https://example.com:65536",
+        "https://bad host/",
+    ],
+)
+def test_normalize_url_rejects_malformed_urls(url):
+    with pytest.raises(ValueError):
+        normalize_url(url)
+
 
 # --- headers -----------------------------------------------------------------
 def test_find_banner_disclosures():

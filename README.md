@@ -40,6 +40,18 @@
    pip install -r requirements.txt
    ```
 
+### Optional performance improvement
+
+The checker uses Python's built-in `html.parser` by default. To speed up HTML
+parsing, optionally install `lxml`:
+
+```bash
+pip install lxml
+```
+
+When `lxml` is installed, the checker uses it automatically; otherwise, it
+continues to work with `html.parser`.
+
 ## Usage
 
 Run the checker from your terminal by providing the target URL or hostname:
